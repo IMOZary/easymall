@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.UUID;
+import java.time.LocalDateTime;
 
 import static com.easymall.order.OrderDtos.CheckoutRequest;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -25,6 +26,7 @@ class OrderServiceIntegrationTest {
     @Autowired CartService cartService;
     @Autowired UserRepository userRepository;
     @Autowired ProductRepository productRepository;
+    @Autowired OrderRepository orderRepository;
 
     @Test
     void duplicateCheckoutReturnsSameOrderAndDeductsStockOnlyOnce() {
@@ -55,6 +57,23 @@ class OrderServiceIntegrationTest {
                 .isInstanceOf(BusinessException.class).hasMessageContaining("已发货");
         assertThat(orderService.pay(user, order.id()).status()).isEqualTo(OrderStatus.PAID);
         assertThat(orderService.cancel(user, order.id()).status()).isEqualTo(OrderStatus.CANCELED);
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getStock()).isEqualTo(stockBefore);
+    }
+
+    @Test
+    void timeoutJobClosesOrderAndRestoresStock() {
+        User user = userRepository.findByUsername("demo").orElseThrow();
+        Product product = productRepository.findAll().get(2);
+        int stockBefore = product.getStock();
+        cartService.add(user, new AddCartRequest(product.getId(), 1));
+        var view = orderService.checkout(user, checkout("timeout-" + UUID.randomUUID()));
+
+        ShopOrder order = orderRepository.findById(view.id()).orElseThrow();
+        order.setExpiresAt(LocalDateTime.now().minusSeconds(1));
+        orderRepository.flush();
+
+        assertThat(orderService.closeExpiredOrders(100)).isEqualTo(1);
+        assertThat(orderRepository.findById(view.id()).orElseThrow().getStatus()).isEqualTo(OrderStatus.CANCELED);
         assertThat(productRepository.findById(product.getId()).orElseThrow().getStock()).isEqualTo(stockBefore);
     }
 

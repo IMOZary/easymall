@@ -51,6 +51,7 @@ public class ShopOrder {
     private LocalDateTime createdAt;
     private LocalDateTime paidAt;
     private LocalDateTime shippedAt;
+    private LocalDateTime expiresAt;
 
     @PrePersist
     void prePersist() { createdAt = LocalDateTime.now(); }
@@ -91,4 +92,6 @@ public class ShopOrder {
     public void setPaidAt(LocalDateTime paidAt) { this.paidAt = paidAt; }
     public LocalDateTime getShippedAt() { return shippedAt; }
     public void setShippedAt(LocalDateTime shippedAt) { this.shippedAt = shippedAt; }
+    public LocalDateTime getExpiresAt() { return expiresAt; }
+    public void setExpiresAt(LocalDateTime expiresAt) { this.expiresAt = expiresAt; }
 }

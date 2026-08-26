@@ -9,10 +9,15 @@ spring:
   jpa:
     open-in-view: false
     hibernate:
-      ddl-auto: update
+      ddl-auto: validate
     properties:
       hibernate:
         format_sql: true
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    baseline-version: 1
+    validate-on-migrate: true
   h2:
     console:
       enabled: true
@@ -26,6 +31,10 @@ server:
       timeout: 2h
       cookie:
         same-site: lax
+easymall:
+  order:
+    payment-timeout-minutes: 30
+    timeout-scan-ms: 60000
 
 ---
 spring:

@@ -10,6 +10,7 @@ import com.easymall.coupon.CouponService;
 import com.easymall.user.User;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,13 +30,16 @@ public class OrderService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final CouponService couponService;
+    private final long paymentTimeoutMinutes;
 
     public OrderService(OrderRepository orderRepository, CartItemRepository cartItemRepository,
-                        ProductRepository productRepository, CouponService couponService) {
+                        ProductRepository productRepository, CouponService couponService,
+                        @Value("${easymall.order.payment-timeout-minutes:30}") long paymentTimeoutMinutes) {
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
         this.couponService = couponService;
+        this.paymentTimeoutMinutes = paymentTimeoutMinutes;
     }
 
     @Transactional
@@ -58,6 +62,7 @@ public class OrderService {
         order.setRemark(request.remark());
         order.setIdempotencyKey(request.idempotencyKey());
         order.setStatus(OrderStatus.PENDING_PAYMENT);
+        order.setExpiresAt(LocalDateTime.now().plusMinutes(paymentTimeoutMinutes));
 
         BigDecimal total = BigDecimal.ZERO;
         for (CartItem cartItem : cartItems) {
@@ -106,8 +111,11 @@ public class OrderService {
 
     @Transactional
     public OrderView pay(User user, Long id) {
-        ShopOrder order = requireMine(user, id);
+        ShopOrder order = requireMineForUpdate(user, id);
         requireStatus(order, OrderStatus.PENDING_PAYMENT, "只有待支付订单可以支付");
+        if (order.getExpiresAt() != null && !order.getExpiresAt().isAfter(LocalDateTime.now())) {
+            throw new BusinessException("订单已超时，请刷新后重试");
+        }
         order.setStatus(OrderStatus.PAID);
         order.setPaidAt(LocalDateTime.now());
         return OrderView.from(order);
@@ -115,7 +123,7 @@ public class OrderService {
 
     @Transactional
     public OrderView cancel(User user, Long id) {
-        ShopOrder order = requireMine(user, id);
+        ShopOrder order = requireMineForUpdate(user, id);
         if (!order.getStatus().canCancel()) throw new BusinessException("当前订单状态不能取消");
         restoreStock(order);
         couponService.release(order.getCouponCode());
@@ -125,7 +133,7 @@ public class OrderService {
 
     @Transactional
     public OrderView complete(User user, Long id) {
-        ShopOrder order = requireMine(user, id);
+        ShopOrder order = requireMineForUpdate(user, id);
         requireStatus(order, OrderStatus.SHIPPED, "只有已发货订单可以确认收货");
         order.setStatus(OrderStatus.COMPLETED);
         return OrderView.from(order);
@@ -133,7 +141,7 @@ public class OrderService {
 
     @Transactional
     public OrderView ship(Long id) {
-        ShopOrder order = orderRepository.findById(id)
+        ShopOrder order = orderRepository.findByIdForUpdate(id)
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "订单不存在"));
         requireStatus(order, OrderStatus.PAID, "只有已支付订单可以发货");
         order.setStatus(OrderStatus.SHIPPED);
@@ -141,8 +149,25 @@ public class OrderService {
         return OrderView.from(order);
     }
 
+    @Transactional
+    public int closeExpiredOrders(int batchSize) {
+        List<ShopOrder> expiredOrders = orderRepository.findExpiredForUpdate(LocalDateTime.now(),
+                PageRequest.of(0, Math.min(Math.max(batchSize, 1), 500)));
+        for (ShopOrder order : expiredOrders) {
+            restoreStock(order);
+            couponService.release(order.getCouponCode());
+            order.setStatus(OrderStatus.CANCELED);
+        }
+        return expiredOrders.size();
+    }
+
     private ShopOrder requireMine(User user, Long id) {
         return orderRepository.findByIdAndUserId(id, user.getId())
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "订单不存在"));
+    }
+
+    private ShopOrder requireMineForUpdate(User user, Long id) {
+        return orderRepository.findByIdAndUserIdForUpdate(id, user.getId())
                 .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "订单不存在"));
     }
 

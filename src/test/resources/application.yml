@@ -6,7 +6,13 @@ spring:
     driver-class-name: org.h2.Driver
   jpa:
     hibernate:
-      ddl-auto: create-drop
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
   h2:
     console:
       enabled: false
+easymall:
+  order:
+    timeout-scan-ms: 3600000

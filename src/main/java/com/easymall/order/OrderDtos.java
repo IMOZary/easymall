@@ -31,13 +31,13 @@ public final class OrderDtos {
                             BigDecimal totalAmount, BigDecimal discountAmount, BigDecimal payAmount,
                             String couponCode, OrderStatus status, String receiver, String phone,
                             String address, String remark, LocalDateTime createdAt, LocalDateTime paidAt,
-                            LocalDateTime shippedAt) {
+                            LocalDateTime shippedAt, LocalDateTime expiresAt) {
         public static OrderView from(ShopOrder order) {
             return new OrderView(order.getId(), order.getOrderNo(), order.getUser().getNickname(),
                     order.getItems().stream().map(OrderItemView::from).toList(), order.getTotalAmount(),
                     order.getDiscountAmount(), order.getPayAmount(), order.getCouponCode(), order.getStatus(),
                     order.getReceiver(), order.getPhone(), order.getAddress(), order.getRemark(),
-                    order.getCreatedAt(), order.getPaidAt(), order.getShippedAt());
+                    order.getCreatedAt(), order.getPaidAt(), order.getShippedAt(), order.getExpiresAt());
         }
     }
 }
