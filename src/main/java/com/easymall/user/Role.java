@@ -1,0 +1,5 @@
+package com.easymall.user;
+
+public enum Role {
+    USER, ADMIN
+}
