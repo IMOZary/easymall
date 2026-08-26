@@ -8,6 +8,8 @@ import com.easymall.catalog.ProductStatus;
 import com.easymall.common.BusinessException;
 import com.easymall.coupon.CouponService;
 import com.easymall.user.User;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.beans.factory.annotation.Value;
@@ -31,15 +33,18 @@ public class OrderService {
     private final ProductRepository productRepository;
     private final CouponService couponService;
     private final long paymentTimeoutMinutes;
+    private final EntityManager entityManager;
 
     public OrderService(OrderRepository orderRepository, CartItemRepository cartItemRepository,
                         ProductRepository productRepository, CouponService couponService,
-                        @Value("${easymall.order.payment-timeout-minutes:30}") long paymentTimeoutMinutes) {
+                        @Value("${easymall.order.payment-timeout-minutes:30}") long paymentTimeoutMinutes,
+                        EntityManager entityManager) {
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
         this.couponService = couponService;
         this.paymentTimeoutMinutes = paymentTimeoutMinutes;
+        this.entityManager = entityManager;
     }
 
     @Transactional
@@ -66,8 +71,9 @@ public class OrderService {
 
         BigDecimal total = BigDecimal.ZERO;
         for (CartItem cartItem : cartItems) {
-            Product product = productRepository.findByIdForUpdate(cartItem.getProduct().getId())
-                    .orElseThrow(() -> new BusinessException("商品不存在"));
+            Product product = cartItem.getProduct();
+            // 购物车会提前加载商品；加锁时同步刷新，避免并发事务使用旧 @Version 更新。
+            entityManager.refresh(product, LockModeType.PESSIMISTIC_WRITE);
             if (product.getStatus() != ProductStatus.ON_SALE) throw new BusinessException(product.getName() + " 已下架");
             if (product.getStock() < cartItem.getQuantity())
                 throw new BusinessException(product.getName() + " 库存不足，仅剩 " + product.getStock() + " 件");
