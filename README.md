@@ -41,7 +41,7 @@ EasyMall 是基于 Java 17 和 Spring Boot 3.5 构建的单体电商系统，覆
 
 ### 2. 幂等键防止重复下单
 
-结算请求携带 `idempotencyKey`。同一用户重复提交时直接返回原订单，并使用 `(user_id, idempotency_key)` 数据库唯一约束作为并发兜底，避免因重复点击或网络重试生成多笔订单。
+结算页面为一次结算尝试生成并复用 `idempotencyKey`，请求失败后重试不会更换 key，提交期间按钮会被禁用。服务端锁定用户记录后执行幂等查询和订单创建，同一用户的并发请求被串行化；`(user_id, idempotency_key)` 数据库唯一约束继续作为最终保护。
 
 代码位置：`ShopOrder` 的联合唯一约束、`OrderService#checkout`。
 
@@ -130,7 +130,7 @@ java -jar target/easymall-1.0.0.jar
 4. 切回普通用户，在订单中心确认收货。
 5. 查看订单状态从待支付、已支付、已发货到已完成的完整流转。
 
-更多内容见 [`docs/API.md`](docs/API.md)、[`docs/DESIGN.md`](docs/DESIGN.md)、[`docs/DATABASE.md`](docs/DATABASE.md) 和 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)。每次推送由 GitHub Actions 自动执行 6 个测试，并在 MySQL 8.4 服务上完成迁移启动检查。
+更多内容见 [`docs/API.md`](docs/API.md)、[`docs/DESIGN.md`](docs/DESIGN.md)、[`docs/DATABASE.md`](docs/DATABASE.md) 和 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)。每次推送由 GitHub Actions 自动执行 8 个测试，并在 MySQL 8.4 服务上完成迁移启动检查。
 
 ## 实现边界
 

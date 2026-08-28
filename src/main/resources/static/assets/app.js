@@ -1,6 +1,7 @@
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
-const state = { user: null, categories: [], products: [], cart: { items: [], totalQuantity: 0, totalAmount: 0 }, coupons: [], categoryId: null, page: 0, totalPages: 1, authMode: 'login' };
+const checkoutKeyStorage = 'easymall.checkout.idempotencyKey';
+const state = { user: null, categories: [], products: [], cart: { items: [], totalQuantity: 0, totalAmount: 0 }, coupons: [], categoryId: null, page: 0, totalPages: 1, authMode: 'login', checkoutKey: null, checkoutSubmitting: false };
 const statusText = { PENDING_PAYMENT: '待支付', PAID: '待发货', SHIPPED: '已发货', COMPLETED: '已完成', CANCELED: '已取消' };
 
 async function api(url, options = {}, silent401 = false) {
@@ -86,13 +87,14 @@ function renderUser() {
 
 async function addToCart(productId) {
   if (!state.user) return openAuth();
-  try { state.cart = await api('/api/cart', { method: 'POST', body: JSON.stringify({ productId, quantity: 1 }) }); renderCart(); toast('已加入购物袋'); }
+  try { state.cart = await api('/api/cart', { method: 'POST', body: JSON.stringify({ productId, quantity: 1 }) }); resetCheckoutKey(); renderCart(); toast('已加入购物袋'); }
   catch (e) { toast(e.message, true); }
 }
 
 async function loadCart() {
   if (!state.user) return;
   state.cart = await api('/api/cart'); renderCart();
+  if (!state.cart.items?.length) resetCheckoutKey();
 }
 
 function renderCart() {
@@ -109,11 +111,13 @@ function renderCart() {
 
 async function handleCartClick(e) {
   const qty = e.target.closest('[data-qty]'); const remove = e.target.closest('[data-remove]');
+  if (!qty && !remove) return;
   try {
     if (qty) {
       if (Number(qty.dataset.value) < 1) return;
       state.cart = await api(`/api/cart/${qty.dataset.qty}`, { method: 'PUT', body: JSON.stringify({ quantity: Number(qty.dataset.value) }) });
     } else if (remove) state.cart = await api(`/api/cart/${remove.dataset.remove}`, { method: 'DELETE' });
+    resetCheckoutKey();
     renderCart();
   } catch (err) { toast(err.message, true); }
 }
@@ -126,18 +130,41 @@ function openCart() {
 
 function openCheckout() {
   if (!state.cart.items?.length) return;
+  ensureCheckoutKey();
   $('#checkoutAmount').textContent = `¥${money(state.cart.totalAmount)}`;
   $('#cartDrawer').classList.remove('open');
   openLayer($('#checkoutModal'));
 }
 
 async function submitCheckout(e) {
-  e.preventDefault(); const form = new FormData(e.target); const payload = Object.fromEntries(form.entries());
-  payload.idempotencyKey = crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`;
+  e.preventDefault();
+  if (state.checkoutSubmitting) return;
+  const form = new FormData(e.target); const payload = Object.fromEntries(form.entries());
+  payload.idempotencyKey = ensureCheckoutKey();
+  const submitButton = e.submitter || e.target.querySelector('[type="submit"]');
+  state.checkoutSubmitting = true;
+  if (submitButton) { submitButton.disabled = true; submitButton.textContent = '正在提交…'; }
   try {
     const order = await api('/api/orders', { method: 'POST', body: JSON.stringify(payload) });
-    state.cart = { items: [], totalQuantity: 0, totalAmount: 0 }; renderCart(); closeLayers(); e.target.reset(); toast(`订单 ${order.orderNo} 创建成功`); showView('orders');
+    state.cart = { items: [], totalQuantity: 0, totalAmount: 0 }; resetCheckoutKey(); renderCart(); closeLayers(); e.target.reset(); toast(`订单 ${order.orderNo} 创建成功`); showView('orders');
   } catch (err) { toast(err.message, true); }
+  finally {
+    state.checkoutSubmitting = false;
+    if (submitButton) { submitButton.disabled = false; submitButton.textContent = '提交订单'; }
+  }
+}
+
+function ensureCheckoutKey() {
+  if (state.checkoutKey) return state.checkoutKey;
+  state.checkoutKey = sessionStorage.getItem(checkoutKeyStorage)
+    || (crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+  sessionStorage.setItem(checkoutKeyStorage, state.checkoutKey);
+  return state.checkoutKey;
+}
+
+function resetCheckoutKey() {
+  state.checkoutKey = null;
+  sessionStorage.removeItem(checkoutKeyStorage);
 }
 
 function openAuth() { switchAuth('login'); openLayer($('#authModal')); }
@@ -150,12 +177,12 @@ function switchAuth(mode) {
 async function submitAuth(e) {
   e.preventDefault(); const payload = Object.fromEntries(new FormData(e.target).entries());
   if (state.authMode === 'login') delete payload.nickname;
-  try { state.user = await api(`/api/auth/${state.authMode}`, { method: 'POST', body: JSON.stringify(payload) }, true); closeLayers(); e.target.reset(); await loadCart(); renderUser(); toast(state.authMode === 'login' ? '欢迎回来' : '注册成功，欢迎加入'); }
+  try { state.user = await api(`/api/auth/${state.authMode}`, { method: 'POST', body: JSON.stringify(payload) }, true); resetCheckoutKey(); closeLayers(); e.target.reset(); await loadCart(); renderUser(); toast(state.authMode === 'login' ? '欢迎回来' : '注册成功，欢迎加入'); }
   catch (err) { toast(err.message, true); }
 }
 
 function userMenu() {
-  if (confirm(`${state.user.nickname}，是否退出当前账号？`)) api('/api/auth/logout', { method: 'POST' }).then(() => { state.user = null; state.cart = { items: [], totalQuantity: 0, totalAmount: 0 }; renderUser(); showView('home'); toast('已安全退出'); });
+  if (confirm(`${state.user.nickname}，是否退出当前账号？`)) api('/api/auth/logout', { method: 'POST' }).then(() => { state.user = null; state.cart = { items: [], totalQuantity: 0, totalAmount: 0 }; resetCheckoutKey(); renderUser(); showView('home'); toast('已安全退出'); });
 }
 
 async function showView(name) {

@@ -27,6 +27,7 @@ class OversellConcurrencyTest {
     @Autowired CartService cartService;
     @Autowired UserRepository userRepository;
     @Autowired ProductRepository productRepository;
+    @Autowired OrderRepository orderRepository;
 
     @Test
     void twoUsersCompetingForLastItemOnlyOneSucceeds() throws Exception {
@@ -62,6 +63,71 @@ class OversellConcurrencyTest {
             pool.shutdownNow();
         }
         assertThat(productRepository.findById(product.getId()).orElseThrow().getStock()).isZero();
+    }
+
+    @Test
+    void concurrentRequestsWithSameKeyReturnOneOrderAndDeductStockOnce() throws Exception {
+        Product product = productRepository.findAll().get(3);
+        int stockBefore = product.getStock();
+        User user = createUser("idem_race");
+        cartService.add(user, new AddCartRequest(product.getId(), 2));
+        String key = "same-key-" + UUID.randomUUID();
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var results = List.of(1, 2).stream().map(ignored -> pool.submit(() -> {
+                ready.countDown();
+                start.await();
+                return orderService.checkout(user, new CheckoutRequest("并发用户", "13800138000", "测试地址",
+                        null, null, key));
+            })).toList();
+            ready.await();
+            start.countDown();
+
+            Long firstOrderId = results.get(0).get().id();
+            Long secondOrderId = results.get(1).get().id();
+            assertThat(secondOrderId).isEqualTo(firstOrderId);
+            assertThat(orderRepository.findByUserIdAndIdempotencyKey(user.getId(), key)).isPresent();
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getStock()).isEqualTo(stockBefore - 2);
+    }
+
+    @Test
+    void concurrentRequestsWithDifferentKeysConsumeCartOnlyOnce() throws Exception {
+        Product product = productRepository.findAll().get(4);
+        int stockBefore = product.getStock();
+        User user = createUser("double_submit");
+        cartService.add(user, new AddCartRequest(product.getId(), 2));
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        var pool = Executors.newFixedThreadPool(2);
+        try {
+            var results = List.of("first-key-", "second-key-").stream().map(prefix -> pool.submit(() -> {
+                ready.countDown();
+                start.await();
+                try {
+                    orderService.checkout(user, new CheckoutRequest("并发用户", "13800138000", "测试地址",
+                            null, null, prefix + UUID.randomUUID()));
+                    return true;
+                } catch (RuntimeException ex) {
+                    return false;
+                }
+            })).toList();
+            ready.await();
+            start.countDown();
+
+            long successCount = 0;
+            for (var result : results) if (result.get()) successCount++;
+            assertThat(successCount).isEqualTo(1);
+        } finally {
+            pool.shutdownNow();
+        }
+        assertThat(productRepository.findById(product.getId()).orElseThrow().getStock()).isEqualTo(stockBefore - 2);
     }
 
     private User createUser(String username) {

@@ -8,6 +8,7 @@ import com.easymall.catalog.ProductStatus;
 import com.easymall.common.BusinessException;
 import com.easymall.coupon.CouponService;
 import com.easymall.user.User;
+import com.easymall.user.UserRepository;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Page;
@@ -32,35 +33,39 @@ public class OrderService {
     private final CartItemRepository cartItemRepository;
     private final ProductRepository productRepository;
     private final CouponService couponService;
+    private final UserRepository userRepository;
     private final long paymentTimeoutMinutes;
     private final EntityManager entityManager;
 
     public OrderService(OrderRepository orderRepository, CartItemRepository cartItemRepository,
-                        ProductRepository productRepository, CouponService couponService,
+                        ProductRepository productRepository, CouponService couponService, UserRepository userRepository,
                         @Value("${easymall.order.payment-timeout-minutes:30}") long paymentTimeoutMinutes,
                         EntityManager entityManager) {
         this.orderRepository = orderRepository;
         this.cartItemRepository = cartItemRepository;
         this.productRepository = productRepository;
         this.couponService = couponService;
+        this.userRepository = userRepository;
         this.paymentTimeoutMinutes = paymentTimeoutMinutes;
         this.entityManager = entityManager;
     }
 
     @Transactional
     public OrderView checkout(User user, CheckoutRequest request) {
-        // 客户端重复提交同一个 key 时直接返回原订单，唯一索引是最后一道并发防线。
-        var existing = orderRepository.findByUserIdAndIdempotencyKey(user.getId(), request.idempotencyKey());
+        // 锁定用户后再执行“查幂等键 -> 消费购物车 -> 创建订单”，封闭并发的先查后插竞态。
+        User lockedUser = userRepository.findByIdForUpdate(user.getId())
+                .orElseThrow(() -> new BusinessException(HttpStatus.NOT_FOUND, "用户不存在"));
+        var existing = orderRepository.findByUserIdAndIdempotencyKey(lockedUser.getId(), request.idempotencyKey());
         if (existing.isPresent()) return OrderView.from(existing.get());
 
-        List<CartItem> cartItems = cartItemRepository.findByUserIdOrderByUpdatedAtDesc(user.getId());
+        List<CartItem> cartItems = cartItemRepository.findByUserIdOrderByUpdatedAtDesc(lockedUser.getId());
         if (cartItems.isEmpty()) throw new BusinessException("购物车是空的");
         // 固定加锁顺序，减少多商品并发下单时出现数据库死锁的概率。
         cartItems = cartItems.stream().sorted(Comparator.comparing(item -> item.getProduct().getId())).toList();
 
         ShopOrder order = new ShopOrder();
         order.setOrderNo(generateOrderNo());
-        order.setUser(user);
+        order.setUser(lockedUser);
         order.setReceiver(request.receiver());
         order.setPhone(request.phone());
         order.setAddress(request.address());
@@ -100,7 +105,7 @@ public class OrderService {
         order.setCouponCode(request.couponCode() == null || request.couponCode().isBlank()
                 ? null : request.couponCode().trim().toUpperCase());
         ShopOrder saved = orderRepository.save(order);
-        cartItemRepository.deleteByUserId(user.getId());
+        cartItemRepository.deleteByUserId(lockedUser.getId());
         return OrderView.from(saved);
     }
 
