@@ -1,15 +1,15 @@
 # EasyMall 电商系统
 
-一个适合应届生简历展示的 Java 单体电商项目。它刻意保持合理的业务完整度和较低的部署门槛：无需安装前端依赖，克隆后执行一条 Maven 命令即可体验商品浏览、购物车、优惠结算、订单流转和运营后台；也可切换 MySQL 验证真实事务与索引。
+EasyMall 是基于 Java 17 和 Spring Boot 3.5 构建的单体电商系统，覆盖商品浏览、购物车、优惠结算、订单流转和运营管理等业务。应用采用前后端同包部署，默认使用 H2 快速启动，也可切换 MySQL 8 运行完整的数据库迁移、事务和索引方案。
 
 ![EasyMall 商城首页](docs/images/home.png)
 
-## 项目定位
+## 项目概览
 
-- 不是微服务练习场：不为了技术名词引入 Redis、MQ、网关或注册中心。
-- 是完整业务闭环：用户下单后可模拟支付，管理员可发货，用户可确认收货或取消订单。
-- 亮点可验证：防超卖、幂等下单、超时关单和订单状态机均有代码、自动化测试及 MySQL 实测记录。
-- 方便面试演示：前后端随同一个 JAR 发布，默认使用文件型 H2，同时保留 MySQL 配置。
+- 用户端提供注册登录、商品检索、购物车、优惠券结算和订单管理。
+- 运营端提供经营数据概览、商品管理、订单查询和发货操作。
+- 下单链路包含库存防超卖、重复请求幂等、订单状态机及超时库存补偿。
+- 前端静态资源与后端一起构建为单个 JAR，同时支持 H2 和 MySQL 两种运行方式。
 
 ## 技术栈
 
@@ -37,7 +37,7 @@
 
 结算事务使用 `PESSIMISTIC_WRITE` 锁定商品行，校验库存后再扣减；多个商品始终按商品 ID 排序加锁，降低死锁概率。并发测试让两个用户同时争抢最后一件库存，验证最终只有一个订单成功。
 
-代码位置：`ProductRepository#findByIdForUpdate`、`OrderService#checkout`、`OversellConcurrencyTest`。
+代码位置：`OrderService#checkout`、`ProductRepository`、`OversellConcurrencyTest`。
 
 ### 2. 幂等键防止重复下单
 
@@ -76,7 +76,7 @@ flowchart LR
     S --> SM[订单状态机]
 ```
 
-按业务域组织代码：`user`、`catalog`、`cart`、`coupon`、`order`、`admin`。每个域内部保持 Controller → Service → Repository 的简单分层，既容易理解，也避免所有代码堆在一个包中。
+代码按 `user`、`catalog`、`cart`、`coupon`、`order`、`admin` 业务域组织。每个业务域采用 Controller → Service → Repository 分层，业务事务集中在 Service 层维护。
 
 ## 快速启动
 
@@ -95,7 +95,7 @@ mvn spring-boot:run
 
 可用优惠码：`NEW20`（满 99 减 20）、`SAVE50`（满 299 减 50）、`ENJOY8`（满 499 享 8 折）。
 
-默认数据保存在项目根目录的 `data/`，删除该目录即可重置演示数据。
+默认数据保存在项目根目录的 `data/`，删除该目录即可重置示例数据。
 
 ## 使用 MySQL
 
@@ -122,16 +122,16 @@ java -jar target/easymall-1.0.0.jar
 - 两个并发用户争抢最后一件商品时不会超卖。
 - 公共商品接口、登录保护和管理员 RBAC。
 
-## 推荐演示路径
+## 体验流程
 
 1. 使用 `demo / demo123` 登录，搜索商品并加入购物车。
 2. 结算时输入 `NEW20`，提交订单并点击模拟支付。
 3. 退出后使用 `admin / admin123` 登录，在管理后台查看指标并发货。
 4. 切回普通用户，在订单中心确认收货。
-5. 打开测试类，解释库存锁、幂等键和状态机的实现。
+5. 查看订单状态从待支付、已支付、已发货到已完成的完整流转。
 
-更详细的接口表见 [`docs/API.md`](docs/API.md)，简历描述和面试讲法见 [`docs/INTERVIEW.md`](docs/INTERVIEW.md)。每次推送由 GitHub Actions 自动执行 6 个测试，并在 MySQL 8.4 服务上做迁移启动检查。
+更多内容见 [`docs/API.md`](docs/API.md)、[`docs/DESIGN.md`](docs/DESIGN.md)、[`docs/DATABASE.md`](docs/DATABASE.md) 和 [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md)。每次推送由 GitHub Actions 自动执行 6 个测试，并在 MySQL 8.4 服务上完成迁移启动检查。
 
-## 取舍说明
+## 实现边界
 
-这是一个简历项目，因此支付使用本地模拟，文件图片使用 CSS 与字符图标，无真实短信、物流和第三方支付。CSRF 在当前同源演示应用中关闭；如果上线，应启用 CSRF Token、验证码、限流和审计日志。这样的边界比“假装已经生产可用”更容易在面试中讲清楚。
+当前版本使用本地模拟支付和物流状态，商品视觉由 CSS 与字符图标呈现，未接入短信、对象存储和第三方支付。认证采用同源 Session，当前配置关闭 CSRF；部署到公网前需要补充 HTTPS、CSRF Token、验证码、接口限流和审计日志。

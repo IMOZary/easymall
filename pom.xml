@@ -14,7 +14,7 @@
     <artifactId>easymall</artifactId>
     <version>1.0.0</version>
     <name>EasyMall</name>
-    <description>面向应届生简历展示的单体电商项目</description>
+    <description>基于 Spring Boot 的单体电商系统，覆盖商品、购物车、优惠券、订单与运营后台</description>
 
     <properties>
         <java.version>17</java.version>
